@@ -7,210 +7,108 @@ terraform {
   }
 }
 
-# Cấu hình nhà cung cấp dịch vụ AWS
 provider "aws" {
-  region = "ap-northeast-1" # Bạn có thể thay đổi region tại đây
+  region = "ap-northeast-1"
 }
 
-# Tạo một VPC
-resource "aws_vpc" "HDD-vpc" {
-  cidr_block       = "10.0.0.0/16"
-  instance_tenancy = "default"
+# ==========================================
+# CLUSTERS & NODE GROUPS
+# ==========================================
 
-  tags = {
-    Name = "HDD-vpc"
-  }
-}
-
-# Tạo hai Subnet công cộng (public subnets) ở hai Availability Zones
-resource "aws_subnet" "HDD-public-subnet-1a" {
-  vpc_id     = aws_vpc.HDD-vpc.id
-  cidr_block = "10.0.1.0/24"
-  availability_zone = "ap-northeast-1a"
-
-  tags = {
-    Name = "HDD-public-subnet-1a"
-  }
-}
-
-resource "aws_subnet" "HDD-public-subnet-1c" {
-  vpc_id     = aws_vpc.HDD-vpc.id
-  cidr_block = "10.0.2.0/24"
-  availability_zone = "ap-northeast-1c"
-
-  tags = {
-    Name = "HDD-public-subnet-1c"
-  }
-}
-
-# Tạo hai Subnet riêng tư (private subnets) ở hai Availability Zones
-resource "aws_subnet" "HDD-private-subnet-1a" {
-  vpc_id     = aws_vpc.HDD-vpc.id
-  cidr_block = "10.0.3.0/24"
-  availability_zone = "ap-northeast-1a"
-
-  tags = {
-    Name = "HDD-private-subnet-1a"
-  }
-}
-
-resource "aws_subnet" "HDD-private-subnet-1c" {
-  vpc_id     = aws_vpc.HDD-vpc.id
-  cidr_block = "10.0.4.0/24"
-  availability_zone = "ap-northeast-1c"
-
-  tags = {
-    Name = "HDD-private-subnet-1c"
-  }
-}
-
-# Tạo một Internet Gateway mới
-resource "aws_internet_gateway" "HDD-internet-gateway" {
-  vpc_id = aws_vpc.HDD-vpc.id
-
-  tags = {
-    Name = "HDD-internet-gateway"
-  }
-}
-
-# Cập nhật Route Table công cộng để sử dụng Internet Gateway mới
-resource "aws_route_table" "HDD-rtb-public" {
-  vpc_id = aws_vpc.HDD-vpc.id
-
-  route {
-    cidr_block = "0.0.0.0/0"
-    gateway_id = aws_internet_gateway.HDD-internet-gateway.id
-  }
-
-  tags = {
-    Name = "HDD-rtb-public"
-  }
-}
-
-# Tạo Elastic IP cho NAT Gateway
-resource "aws_eip" "HDD-nat-eip" {
-  domain = "vpc"
-
-  tags = {
-    Name = "HDD-nat-eip"
-  }
-
-  depends_on = [aws_internet_gateway.HDD-internet-gateway]
-}
-
-# Tạo NAT Gateway
-resource "aws_nat_gateway" "HDD-nat-gateway" {
-  allocation_id = aws_eip.HDD-nat-eip.id
-  subnet_id     = aws_subnet.HDD-public-subnet-1a.id
-
-  tags = {
-    Name = "HDD-nat-gateway"
-  }
-
-  depends_on = [aws_internet_gateway.HDD-internet-gateway]
-}
-
-# Tạo Route Table riêng tư (private route table)
-resource "aws_route_table" "HDD-rtb-private" {
-  vpc_id = aws_vpc.HDD-vpc.id
-
-  route {
-    cidr_block     = "0.0.0.0/0"
-    nat_gateway_id = aws_nat_gateway.HDD-nat-gateway.id
-  }
-
-  tags = {
-    Name = "HDD-rtb-private"
-  }
-}
-
-# Liên kết Route Table công cộng với các Public Subnet
-resource "aws_route_table_association" "HDD-rtb-public-1a" {
-  subnet_id      = aws_subnet.HDD-public-subnet-1a.id
-  route_table_id = aws_route_table.HDD-rtb-public.id
-}
-
-resource "aws_route_table_association" "HDD-rtb-public-1c" {
-  subnet_id      = aws_subnet.HDD-public-subnet-1c.id
-  route_table_id = aws_route_table.HDD-rtb-public.id
-}
-
-# Liên kết Route Table riêng tư với các Private Subnet
-resource "aws_route_table_association" "HDD-rtb-private-1a" {
-  subnet_id      = aws_subnet.HDD-private-subnet-1a.id
-  route_table_id = aws_route_table.HDD-rtb-private.id
-}
-
-resource "aws_route_table_association" "HDD-rtb-private-1c" {
-  subnet_id      = aws_subnet.HDD-private-subnet-1c.id
-  route_table_id = aws_route_table.HDD-rtb-private.id
-}
-
-# Create an IAM Role for EKS
-resource "aws_iam_role" "HDD-cluster-role" {
-  name = "HDD-cluster-role"
-
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Action = "sts:AssumeRole"
-        Effect = "Allow"
-        Principal = {
-          Service = "eks.amazonaws.com"
-        }
-      }
-    ]
-  })
-
-  tags = {
-    Name = "HDD-cluster-role"
-  }
-}
-
-# Attach AdministratorAccess policy to the IAM Role
-resource "aws_iam_role_policy_attachment" "HDD-cluster-role-attachment" {
-  role       = aws_iam_role.HDD-cluster-role.name
-  policy_arn = "arn:aws:iam::aws:policy/AdministratorAccess"
-}
-
-# Create EKS Cluster for Application
+# --- Cluster 1: Application ---
 resource "aws_eks_cluster" "HDD-eks-application" {
   name     = "HDD-eks-application"
-  role_arn = aws_iam_role.HDD-cluster-role.arn
-
+  role_arn = aws_iam_role.HDD-cluster-role.arn # Lấy từ iam_roles.tf
   vpc_config {
     subnet_ids = [
-      aws_subnet.HDD-public-subnet-1a.id,
-      aws_subnet.HDD-public-subnet-1c.id
+      aws_subnet.HDD-public-subnet-1a.id, # Lấy từ vpc.tf
+      aws_subnet.HDD-public-subnet-1c.id,
+      aws_subnet.HDD-private-subnet-1a.id,
+      aws_subnet.HDD-private-subnet-1c.id
     ]
     endpoint_public_access = true
-    endpoint_private_access = true
   }
-
-  tags = {
-    Name = "HDD-eks-application"
-  }
+  depends_on = [aws_iam_role_policy_attachment.cluster_AmazonEKSClusterPolicy]
 }
 
-# Create EKS Cluster for Techstack
+# OIDC Application
+data "tls_certificate" "app_tls" {
+  url = aws_eks_cluster.HDD-eks-application.identity[0].oidc[0].issuer
+}
+resource "aws_iam_openid_connect_provider" "app_oidc" {
+  client_id_list  = ["sts.amazonaws.com"]
+  thumbprint_list = [data.tls_certificate.app_tls.certificates[0].sha1_fingerprint]
+  url             = aws_eks_cluster.HDD-eks-application.identity[0].oidc[0].issuer
+}
+
+# Node Group Application
+resource "aws_eks_node_group" "app_node_group" {
+  cluster_name    = aws_eks_cluster.HDD-eks-application.name
+  node_group_name = "app-workers"
+  node_role_arn   = aws_iam_role.HDD-node-role.arn
+  subnet_ids      = [aws_subnet.HDD-private-subnet-1a.id, aws_subnet.HDD-private-subnet-1c.id]
+  scaling_config {
+    desired_size = 1
+    max_size     = 2
+    min_size     = 1
+  }
+  instance_types = ["t3.medium"]
+  
+  depends_on = [
+    aws_iam_role_policy_attachment.node_WorkerNode,
+    aws_iam_role_policy_attachment.node_CNI,
+    aws_iam_role_policy_attachment.node_ECR,
+    aws_iam_role_policy_attachment.node_SSM,
+    aws_iam_role_policy_attachment.node_EBS,
+    aws_iam_role_policy_attachment.node_CloudWatch
+  ]
+}
+
+# --- Cluster 2: Techstack ---
 resource "aws_eks_cluster" "HDD-eks-techstack" {
   name     = "HDD-eks-techstack"
   role_arn = aws_iam_role.HDD-cluster-role.arn
-
   vpc_config {
     subnet_ids = [
       aws_subnet.HDD-public-subnet-1a.id,
-      aws_subnet.HDD-public-subnet-1c.id
+      aws_subnet.HDD-public-subnet-1c.id,
+      aws_subnet.HDD-private-subnet-1a.id,
+      aws_subnet.HDD-private-subnet-1c.id
     ]
     endpoint_public_access = true
-    endpoint_private_access = true
   }
-
-  tags = {
-    Name = "HDD-eks-techstack"
-  }
+  depends_on = [aws_iam_role_policy_attachment.cluster_AmazonEKSClusterPolicy]
 }
 
+# OIDC Techstack
+data "tls_certificate" "tech_tls" {
+  url = aws_eks_cluster.HDD-eks-techstack.identity[0].oidc[0].issuer
+}
+resource "aws_iam_openid_connect_provider" "tech_oidc" {
+  client_id_list  = ["sts.amazonaws.com"]
+  thumbprint_list = [data.tls_certificate.tech_tls.certificates[0].sha1_fingerprint]
+  url             = aws_eks_cluster.HDD-eks-techstack.identity[0].oidc[0].issuer
+}
 
-
+# Node Group Techstack
+resource "aws_eks_node_group" "tech_node_group" {
+  cluster_name    = aws_eks_cluster.HDD-eks-techstack.name
+  node_group_name = "tech-workers"
+  node_role_arn   = aws_iam_role.HDD-node-role.arn
+  subnet_ids      = [aws_subnet.HDD-private-subnet-1a.id, aws_subnet.HDD-private-subnet-1c.id]
+  scaling_config {
+    desired_size = 1
+    max_size     = 2
+    min_size     = 1
+  }
+  instance_types = ["t3.medium"]
+  
+  depends_on = [
+    aws_iam_role_policy_attachment.node_WorkerNode,
+    aws_iam_role_policy_attachment.node_CNI,
+    aws_iam_role_policy_attachment.node_ECR,
+    aws_iam_role_policy_attachment.node_SSM,
+    aws_iam_role_policy_attachment.node_EBS,
+    aws_iam_role_policy_attachment.node_CloudWatch
+  ]
+}
