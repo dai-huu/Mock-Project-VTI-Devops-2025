@@ -146,3 +146,71 @@ resource "aws_route_table_association" "HDD-rtb-private-1c" {
   route_table_id = aws_route_table.HDD-rtb-private.id
 }
 
+# Create an IAM Role for EKS
+resource "aws_iam_role" "HDD-cluster-role" {
+  name = "HDD-cluster-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = "sts:AssumeRole"
+        Effect = "Allow"
+        Principal = {
+          Service = "eks.amazonaws.com"
+        }
+      }
+    ]
+  })
+
+  tags = {
+    Name = "HDD-cluster-role"
+  }
+}
+
+# Attach AdministratorAccess policy to the IAM Role
+resource "aws_iam_role_policy_attachment" "HDD-cluster-role-attachment" {
+  role       = aws_iam_role.HDD-cluster-role.name
+  policy_arn = "arn:aws:iam::aws:policy/AdministratorAccess"
+}
+
+# Create EKS Cluster for Application
+resource "aws_eks_cluster" "HDD-eks-application" {
+  name     = "HDD-eks-application"
+  role_arn = aws_iam_role.HDD-cluster-role.arn
+
+  vpc_config {
+    subnet_ids = [
+      aws_subnet.HDD-public-subnet-1a.id,
+      aws_subnet.HDD-public-subnet-1c.id
+    ]
+    endpoint_public_access = true
+    endpoint_private_access = true
+  }
+
+  tags = {
+    Name = "HDD-eks-application"
+  }
+}
+
+# Create EKS Cluster for Techstack
+resource "aws_eks_cluster" "HDD-eks-techstack" {
+  name     = "HDD-eks-techstack"
+  role_arn = aws_iam_role.HDD-cluster-role.arn
+
+  vpc_config {
+    subnet_ids = [
+      aws_subnet.HDD-public-subnet-1a.id,
+      aws_subnet.HDD-public-subnet-1c.id
+    ]
+    endpoint_public_access = true
+    endpoint_private_access = true
+  }
+
+  tags = {
+    Name = "HDD-eks-techstack"
+  }
+}
+
+
+
