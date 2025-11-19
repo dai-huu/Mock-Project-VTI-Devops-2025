@@ -18,16 +18,24 @@ provider "aws" {
 # --- Cluster 1: Application ---
 resource "aws_eks_cluster" "HDD-eks-application" {
   name     = "HDD-eks-application"
-  role_arn = aws_iam_role.HDD-cluster-role.arn # Lấy từ iam_roles.tf
+  role_arn = aws_iam_role.HDD-cluster-role.arn
+  
   vpc_config {
     subnet_ids = [
-      aws_subnet.HDD-public-subnet-1a.id, # Lấy từ vpc.tf
+      aws_subnet.HDD-public-subnet-1a.id,
       aws_subnet.HDD-public-subnet-1c.id,
       aws_subnet.HDD-private-subnet-1a.id,
       aws_subnet.HDD-private-subnet-1c.id
     ]
     endpoint_public_access = true
   }
+
+  # [MỚI - QUAN TRỌNG] Bật chế độ xác thực API để dùng Access Entry
+  access_config {
+    authentication_mode                         = "API_AND_CONFIG_MAP"
+    bootstrap_cluster_creator_admin_permissions = true
+  }
+
   depends_on = [aws_iam_role_policy_attachment.cluster_AmazonEKSClusterPolicy]
 }
 
@@ -68,6 +76,7 @@ resource "aws_eks_node_group" "app_node_group" {
 resource "aws_eks_cluster" "HDD-eks-techstack" {
   name     = "HDD-eks-techstack"
   role_arn = aws_iam_role.HDD-cluster-role.arn
+  
   vpc_config {
     subnet_ids = [
       aws_subnet.HDD-public-subnet-1a.id,
@@ -77,6 +86,13 @@ resource "aws_eks_cluster" "HDD-eks-techstack" {
     ]
     endpoint_public_access = true
   }
+
+  # [MỚI - QUAN TRỌNG] Bật chế độ xác thực API
+  access_config {
+    authentication_mode                         = "API_AND_CONFIG_MAP"
+    bootstrap_cluster_creator_admin_permissions = true
+  }
+
   depends_on = [aws_iam_role_policy_attachment.cluster_AmazonEKSClusterPolicy]
 }
 
