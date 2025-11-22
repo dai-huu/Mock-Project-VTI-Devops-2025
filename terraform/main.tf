@@ -128,3 +128,56 @@ resource "aws_eks_node_group" "tech_node_group" {
     aws_iam_role_policy_attachment.node_CloudWatch
   ]
 }
+
+# ==========================================
+# SECURITY GROUP RULES - INTER-CLUSTER COMMUNICATION
+# ==========================================
+
+# Get security groups từ cả 2 clusters
+data "aws_security_group" "app_cluster_sg" {
+  filter {
+    name   = "group-name"
+    values = ["eks-cluster-sg-${aws_eks_cluster.HDD-eks-application.name}-*"]
+  }
+  filter {
+    name   = "vpc-id"
+    values = [aws_vpc.HDD-vpc.id]
+  }
+  depends_on = [aws_eks_cluster.HDD-eks-application]
+}
+
+data "aws_security_group" "tech_cluster_sg" {
+  filter {
+    name   = "group-name"
+    values = ["eks-cluster-sg-${aws_eks_cluster.HDD-eks-techstack.name}-*"]
+  }
+  filter {
+    name   = "vpc-id"
+    values = [aws_vpc.HDD-vpc.id]
+  }
+  depends_on = [aws_eks_cluster.HDD-eks-techstack]
+}
+
+# Allow all inbound traffic từ Application cluster SG đến Techstack cluster SG
+resource "aws_security_group_rule" "app_to_tech_ingress" {
+  type              = "ingress"
+  from_port         = 0
+  to_port           = 65535
+  protocol          = "-1"
+  source_security_group_id = data.aws_security_group.app_cluster_sg.id
+  security_group_id = data.aws_security_group.tech_cluster_sg.id
+  description       = "Allow all traffic from Application cluster to Techstack cluster"
+  depends_on = [data.aws_security_group.app_cluster_sg, data.aws_security_group.tech_cluster_sg]
+}
+
+# Allow all inbound traffic từ Techstack cluster SG đến Application cluster SG
+resource "aws_security_group_rule" "tech_to_app_ingress" {
+  type              = "ingress"
+  from_port         = 0
+  to_port           = 65535
+  protocol          = "-1"
+  source_security_group_id = data.aws_security_group.tech_cluster_sg.id
+  security_group_id = data.aws_security_group.app_cluster_sg.id
+  description       = "Allow all traffic from Techstack cluster to Application cluster"
+  depends_on = [data.aws_security_group.app_cluster_sg, data.aws_security_group.tech_cluster_sg]
+}
