@@ -113,9 +113,9 @@ resource "aws_eks_node_group" "tech_node_group" {
   node_role_arn   = aws_iam_role.HDD-node-role.arn
   subnet_ids      = [aws_subnet.HDD-private-subnet-1a.id, aws_subnet.HDD-private-subnet-1c.id]
   scaling_config {
-    desired_size = 4
-    max_size     = 4
-    min_size     = 4
+    desired_size = 5
+    max_size     = 5
+    min_size     = 5
   }
   instance_types = ["t3.medium"]
   
