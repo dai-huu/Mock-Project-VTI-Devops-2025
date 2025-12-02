@@ -44,109 +44,118 @@ This Terraform configuration sets up a complete AWS infrastructure including a V
 
 ### Provider
 - **AWS Region**: `ap-northeast-1` (You can modify this in the `provider` block in `main.tf`.)
+# Terraform Configuration for AWS Infrastructure
 
-### VPC & Network Resources
-- **VPC**: CIDR block `10.0.0.0/16`
-- **Public Subnets**:
-  - `10.0.1.0/24` in `ap-northeast-1a`
-  - `10.0.2.0/24` in `ap-northeast-1c`
-- **Private Subnets**:
-  - `10.0.3.0/24` in `ap-northeast-1a`
-  - `10.0.4.0/24` in `ap-northeast-1c`
-- **Internet Gateway**: For public subnet internet access.
-- **NAT Gateway**: For private subnet internet access.
+## Overview
+This Terraform configuration creates the following AWS infrastructure (exact resources are declared in the `*.tf` files):
 
-### EKS Clusters
+- VPC with public & private subnets
+- Internet Gateway and NAT Gateway
+- Route tables and associations for public/private subnets
+- Two EKS clusters (`HDD-eks-application` and `HDD-eks-techstack`)
+- Node groups for each cluster
+- IAM roles for cluster control plane, worker nodes and a shared EBS CSI IRSA role
+- EKS add-ons (CNI, CoreDNS, kube-proxy, EBS CSI driver, pod identity agent, monitoring, external-dns, metrics-server)
 
-#### Cluster 1: HDD-eks-application
-- **Purpose**: Hosts application workloads.
-- **Kubernetes Version**: Latest stable version.
-- **Node Group**: `app-workers`
-  - **Instance Type**: `t3.medium`
-  - **Desired Size**: 2 nodes
-  - **Scaling Range**: Min 2, Max 2
-- **Authentication Mode**: API and ConfigMap
+**Region:** `ap-northeast-1` (configured in `main.tf` provider block)
 
-#### Cluster 2: HDD-eks-techstack
-- **Purpose**: Hosts tech stack components.
-- **Kubernetes Version**: Latest stable version.
-- **Node Group**: `tech-workers`
-  - **Instance Type**: `t3.medium`
-  - **Desired Size**: 4 nodes
-  - **Scaling Range**: Min 4, Max 4
-- **Authentication Mode**: API and ConfigMap
+## Key resource values (as declared in the code)
 
-### IAM Roles
+- VPC: `10.0.0.0/16`
+- Public subnets:
+  - `HDD-public-subnet-1a` — `10.0.0.0/18` (AZ `ap-northeast-1a`, public)
+  - `HDD-public-subnet-1c` — `10.0.64.0/18` (AZ `ap-northeast-1c`, public)
+- Private subnets:
+  - `HDD-private-subnet-1a` — `10.0.128.0/18` (AZ `ap-northeast-1a`)
+  - `HDD-private-subnet-1c` — `10.0.192.0/18` (AZ `ap-northeast-1c`)
+- NAT Gateway: Elastic IP + NAT in `HDD-public-subnet-1a`
 
-#### 1. HDD-cluster-role
-- **Purpose**: Used by EKS control plane to manage cluster operations.
-- **Policy**: `AmazonEKSClusterPolicy`
-- **Used by**: Both `HDD-eks-application` and `HDD-eks-techstack` clusters.
+### EKS clusters
 
-#### 2. HDD-EBS-role
-- **Purpose**: Used by EBS CSI Driver add-on for managing EBS volumes.
-- **Policy**: `AmazonEBSCSIDriverPolicy`
-- **Integration**: Configured with OIDC providers for both clusters to allow Pod Identity access.
+- `HDD-eks-application` (cluster)
+  - Node group `app-workers` — `t3.medium`, desired=3, min=3, max=3
+  - Cluster `access_config` uses `API_AND_CONFIG_MAP` authentication
 
-#### 3. HDD-node-role
-- **Purpose**: Used by EKS worker nodes.
-- **Policies**:
-  - `AmazonEKSWorkerNodePolicy`
-  - `AmazonEKS_CNI_Policy`
-  - `AmazonEC2ContainerRegistryReadOnly`
-  - `AmazonSSMManagedInstanceCore`
-  - `AmazonEBSCSIDriverPolicy`
-  - `CloudWatchAgentServerPolicy`
+- `HDD-eks-techstack` (cluster)
+  - Node group `tech-workers` — `t3.medium`, desired=5, min=5, max=5
+  - Cluster `access_config` uses `API_AND_CONFIG_MAP` authentication
 
-### EKS Add-ons
+### IAM & OIDC
 
-#### Application Cluster Add-ons:
-- **vpc-cni**: Manages networking for pods (AWS VPC CNI plugin).
-- **coredns**: DNS service for service discovery.
-- **kube-proxy**: Manages network rules on worker nodes.
-- **aws-ebs-csi-driver**: Manages EBS volume provisioning and attachment.
-- **eks-pod-identity-agent**: Enables Pod Identity authentication.
-- **eks-node-monitoring-agent**: Provides node monitoring capabilities.
-- **external-dns**: Automatically creates DNS records for Kubernetes services.
-- **metrics-server**: Provides metrics for autoscaling and monitoring.
+- `HDD-cluster-role`: attached `AmazonEKSClusterPolicy` (used by control planes)
+- `HDD-node-role`: attached multiple managed policies for worker nodes (EKS worker, CNI, ECR read-only, SSM, EBS CSI, CloudWatch)
+- `HDD-EBS-role`: shared IRSA role for the EBS CSI driver; its assume-role includes both clusters' OIDC providers and the `kube-system:ebs-csi-controller-sa` service account
 
-#### Techstack Cluster Add-ons:
-- Same add-ons as application cluster (see above).
+### Add-ons (both clusters)
 
-### OIDC Providers
-- **Application Cluster OIDC**: Enables Pod Identity for `HDD-eks-application`.
-- **Techstack Cluster OIDC**: Enables Pod Identity for `HDD-eks-techstack`.
+- `vpc-cni`, `coredns`, `kube-proxy`, `aws-ebs-csi-driver` (uses `HDD-EBS-role`), `eks-pod-identity-agent`, `eks-node-monitoring-agent`, `external-dns`, `metrics-server`
 
-Both OIDC providers are configured to trust the EBS CSI Driver service account in `kube-system` namespace.
+### Cluster access/users
 
-## Notes
-- Ensure your AWS credentials are properly configured before running Terraform commands.
-- Both EKS clusters share the same VPC and node role for cost optimization.
-- The EBS CSI Driver add-on is configured to use a shared IAM role (`HDD-EBS-role`) via OIDC, enabling secure Pod Identity access.
-- Node groups are deployed in private subnets for enhanced security.
-- Review the `main.tf` and `eks_addons.tf` files to customize the configuration as needed.
+- `eks_access.tf` creates `aws_eks_access_entry` and `aws_eks_access_policy_association` for a list of admin ARNs (local list `all_admin_users`) and filters out the caller executing Terraform so the caller is assumed bootstraped.
 
-## File Structure
+### Security group rules
+
+- Terraform finds the EKS cluster security groups by name pattern and creates bi-directional SG rules allowing all traffic between application and techstack clusters (used for inter-cluster communications).
+
+## Usage
+
+Run the usual Terraform workflow:
+
+```powershell
+terraform init
+terraform plan
+terraform apply
+terraform destroy
+```
+
+## Important notes & recommendations
+
+- The repository currently contains `terraform.tfstate` and `terraform.tfstate.backup` under the `terraform/` folder. These files contain sensitive and environment-specific data and should NOT be committed to Git.
+  - Recommended: remove the files from Git and configure a remote backend (S3 + DynamoDB lock). Example commands:
+
+```powershell
+git rm --cached terraform/terraform.tfstate terraform/terraform.tfstate.backup
+echo "terraform/terraform.tfstate" >> .gitignore
+git commit -m "Remove terraform state from repo and add to gitignore"
+```
+
+  - Example backend snippet (add to a `backend.tf` or inside `terraform` block):
+
+```hcl
+terraform {
+  backend "s3" {
+    bucket         = "<your-terraform-state-bucket>"
+    key            = "mock-pj/terraform.tfstate"
+    region         = "ap-northeast-1"
+    dynamodb_table = "<your-lock-table>"
+  }
+}
+```
+
+- Parameterize hard-coded values (region, AZs, CIDR blocks, instance types, node counts, admin ARNs) by moving them to `variables.tf` so the configuration is reusable across environments.
+- Review IAM policies and follow least-privilege: currently several managed policies are attached to the node role for convenience.
+- Verify EKS add-on compatibility with your target Kubernetes version before applying.
+
+## Suggested next steps
+
+- Remove `terraform.tfstate` from the repository and configure a remote backend (S3 + DynamoDB).
+- Create `variables.tf` and update `.tf` files to use variables for region, AZs, CIDRs, instance types and node counts.
+- Optionally add `outputs.tf` for important values such as cluster names and kubeconfig data.
+
+## File structure (relevant files)
+
 ```
 terraform/
-├── main.tf           # VPC, EKS clusters, node groups, IAM roles, and OIDC providers
-├── eks_addons.tf     # EKS add-ons for both clusters
-├── terraform.tfstate # Terraform state file (tracked in git)
-└── README.md         # This documentation
+├── main.tf
+├── vpc.tf
+├── iam_roles.tf
+├── eks_access.tf
+├── eks_addons.tf
+├── terraform.tfstate                # currently present in repo — remove it
+└── README.md
 ```
 
-## Troubleshooting
-
-### EKS Add-on Issues
-- **Unsupported Add-ons**: Some add-ons like `efs-csi-driver` and `eks-pod-identity` may not be supported on specific Kubernetes versions. Check the cluster version with `aws eks describe-cluster --name <cluster-name> --query "cluster.version"`.
-- **Policy Not Found**: Ensure the IAM policy exists. For example, verify `AmazonEBSCSIDriverPolicy` exists in your AWS account.
-- **Add-on Conflicts**: If add-ons fail with configuration conflicts, delete existing add-ons and reapply:
-  ```bash
-  aws eks delete-addon --cluster-name <cluster-name> --addon-name <addon-name>
-  terraform apply
-  ```
-
-### General Issues
-- If you encounter issues, check the Terraform logs or AWS Console for more details.
-- Ensure your AWS account has sufficient permissions to create the resources defined in this configuration.
-- Monitor EKS cluster status in the AWS Console under EKS > Clusters to verify cluster health.
+If you want, mình có thể:
+- tạo `variables.tf` và refactor các giá trị hard-coded thành biến;
+- hoặc tạo `backend.tf` mẫu và hướng dẫn di chuyển state lên S3.
